@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ure.c,v 1.26 2021/08/13 01:24:22 gnezdo Exp $	*/
+/*	$OpenBSD: if_ure.c,v 1.28 2021/08/20 04:54:10 kevlo Exp $	*/
 /*-
  * Copyright (c) 2015, 2016, 2019 Kevin Lo <kevlo@openbsd.org>
  * Copyright (c) 2020 Jonathon Fletcher <jonathon.fletcher@gmail.com>

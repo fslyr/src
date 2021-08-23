@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-confirm-before.c,v 1.46 2021/08/17 11:20:13 nicm Exp $ */
+/* $OpenBSD: cmd-confirm-before.c,v 1.48 2021/08/21 10:22:38 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Tiago Cunha <me@tiagocunha.org>
@@ -39,7 +39,7 @@ const struct cmd_entry cmd_confirm_before_entry = {
 	.name = "confirm-before",
 	.alias = "confirm",
 
-	.args = { "bp:t:", 1, 1 },
+	.args = { "bp:t:", 1, 1, NULL },
 	.usage = "[-b] [-p prompt] " CMD_TARGET_CLIENT_USAGE " command",
 
 	.flags = CMD_CLIENT_TFLAG,
@@ -59,21 +59,21 @@ cmd_confirm_before_exec(struct cmd *self, struct cmdq_item *item)
 	struct cmd_confirm_before_data	*cdata;
 	struct client			*tc = cmdq_get_target_client(item);
 	struct cmd_find_state		*target = cmdq_get_target(item);
-	char				*cmd, *copy, *new_prompt, *ptr;
+	char				*cmd, *copy, *new_prompt, *tmp;
 	const char			*prompt;
 	int				 wait = !args_has(args, 'b');
+
+	cdata = xcalloc(1, sizeof *cdata);
+	cdata->cmd = xstrdup(args_string(args, 0));
 
 	if ((prompt = args_get(args, 'p')) != NULL)
 		xasprintf(&new_prompt, "%s ", prompt);
 	else {
-		ptr = copy = xstrdup(args->argv[0]);
-		cmd = strsep(&ptr, " \t");
+		tmp = copy = xstrdup(cdata->cmd);
+		cmd = strsep(&tmp, " \t");
 		xasprintf(&new_prompt, "Confirm '%s'? (y/n) ", cmd);
 		free(copy);
 	}
-
-	cdata = xcalloc(1, sizeof *cdata);
-	cdata->cmd = xstrdup(args->argv[0]);
 
 	cmd_get_source(self, &cdata->pi.file, &cdata->pi.line);
 	if (wait)

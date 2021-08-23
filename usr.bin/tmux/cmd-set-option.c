@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-set-option.c,v 1.138 2020/12/15 08:31:50 nicm Exp $ */
+/* $OpenBSD: cmd-set-option.c,v 1.140 2021/08/21 10:22:39 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -33,7 +33,7 @@ const struct cmd_entry cmd_set_option_entry = {
 	.name = "set-option",
 	.alias = "set",
 
-	.args = { "aFgopqst:uUw", 1, 2 },
+	.args = { "aFgopqst:uUw", 1, 2, NULL },
 	.usage = "[-aFgopqsuUw] " CMD_TARGET_PANE_USAGE " option [value]",
 
 	.target = { 't', CMD_FIND_PANE, CMD_FIND_CANFAIL },
@@ -46,7 +46,7 @@ const struct cmd_entry cmd_set_window_option_entry = {
 	.name = "set-window-option",
 	.alias = "setw",
 
-	.args = { "aFgoqt:u", 1, 2 },
+	.args = { "aFgoqt:u", 1, 2, NULL },
 	.usage = "[-aFgoqu] " CMD_TARGET_WINDOW_USAGE " option [value]",
 
 	.target = { 't', CMD_FIND_WINDOW, CMD_FIND_CANFAIL },
@@ -59,7 +59,7 @@ const struct cmd_entry cmd_set_hook_entry = {
 	.name = "set-hook",
 	.alias = NULL,
 
-	.args = { "agpRt:uw", 1, 2 },
+	.args = { "agpRt:uw", 1, 2, NULL },
 	.usage = "[-agpRuw] " CMD_TARGET_PANE_USAGE " hook [command]",
 
 	.target = { 't', CMD_FIND_PANE, CMD_FIND_CANFAIL },
@@ -77,14 +77,16 @@ cmd_set_option_exec(struct cmd *self, struct cmdq_item *item)
 	struct window_pane		*loop;
 	struct options			*oo;
 	struct options_entry		*parent, *o, *po;
-	char				*name, *argument, *value = NULL, *cause;
+	char				*name, *argument, *expanded = NULL;
+	char				*cause;
+	const char			*value;
 	int				 window, idx, already, error, ambiguous;
 	int				 scope;
 
 	window = (cmd_get_entry(self) == &cmd_set_window_option_entry);
 
 	/* Expand argument. */
-	argument = format_single_from_target(item, args->argv[0]);
+	argument = format_single_from_target(item, args_string(args, 0));
 
 	/* If set-hook -R, fire the hook straight away. */
 	if (cmd_get_entry(self) == &cmd_set_hook_entry && args_has(args, 'R')) {
@@ -104,12 +106,14 @@ cmd_set_option_exec(struct cmd *self, struct cmdq_item *item)
 			cmdq_error(item, "invalid option: %s", argument);
 		goto fail;
 	}
-	if (args->argc < 2)
+	if (args_count(args) < 2)
 		value = NULL;
-	else if (args_has(args, 'F'))
-		value = format_single_from_target(item, args->argv[1]);
 	else
-		value = xstrdup(args->argv[1]);
+		value = args_string(args, 1);
+	if (value != NULL && args_has(args, 'F')) {
+		expanded = format_single_from_target(item, value);
+		value = expanded;
+	}
 
 	/* Get the scope and table for the option .*/
 	scope = options_scope_from_name(args, window, name, target, &oo,
@@ -211,13 +215,13 @@ cmd_set_option_exec(struct cmd *self, struct cmdq_item *item)
 
 out:
 	free(argument);
-	free(value);
+	free(expanded);
 	free(name);
 	return (CMD_RETURN_NORMAL);
 
 fail:
 	free(argument);
-	free(value);
+	free(expanded);
 	free(name);
 	return (CMD_RETURN_ERROR);
 }

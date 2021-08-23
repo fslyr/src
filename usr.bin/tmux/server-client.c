@@ -1,4 +1,4 @@
-/* $OpenBSD: server-client.c,v 1.380 2021/08/13 18:54:54 nicm Exp $ */
+/* $OpenBSD: server-client.c,v 1.384 2021/08/22 13:48:29 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -280,7 +280,7 @@ server_client_open(struct client *c, char **cause)
 static void
 server_client_attached_lost(struct client *c)
 {
-	struct session	*s = c->session;
+	struct session	*s;
 	struct window	*w;
 	struct client	*loop;
 	struct client	*found;
@@ -308,7 +308,6 @@ server_client_attached_lost(struct client *c)
 			server_client_update_latest(found);
 	}
 }
-
 
 /* Set client session. */
 void
@@ -1554,7 +1553,6 @@ server_client_check_pane_resize(struct window_pane *wp)
 	evtimer_add(&wp->resize_timer, &tv);
 }
 
-
 /* Check pane buffer size. */
 static void
 server_client_check_pane_buffer(struct window_pane *wp)
@@ -2153,9 +2151,6 @@ server_client_dispatch_command(struct client *c, struct imsg *imsg)
 
 	pr = cmd_parse_from_arguments(argc, argv, NULL);
 	switch (pr->status) {
-	case CMD_PARSE_EMPTY:
-		cause = xstrdup("empty command");
-		goto error;
 	case CMD_PARSE_ERROR:
 		cause = pr->error;
 		goto error;
@@ -2378,7 +2373,7 @@ server_client_set_flags(struct client *c, const char *flags)
 	uint64_t flag;
 	int	 not;
 
-	s = copy = xstrdup (flags);
+	s = copy = xstrdup(flags);
 	while ((next = strsep(&s, ",")) != NULL) {
 		not = (*next == '!');
 		if (not)

@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-display-menu.c,v 1.27 2021/08/13 17:03:29 nicm Exp $ */
+/* $OpenBSD: cmd-display-menu.c,v 1.31 2021/08/23 08:17:41 nicm Exp $ */
 
 /*
  * Copyright (c) 2019 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -37,7 +37,7 @@ const struct cmd_entry cmd_display_menu_entry = {
 	.name = "display-menu",
 	.alias = "menu",
 
-	.args = { "c:t:OT:x:y:", 1, -1 },
+	.args = { "c:t:OT:x:y:", 1, -1, NULL },
 	.usage = "[-O] [-c target-client] " CMD_TARGET_PANE_USAGE " [-T title] "
 		 "[-x position] [-y position] name key command ...",
 
@@ -51,7 +51,7 @@ const struct cmd_entry cmd_display_popup_entry = {
 	.name = "display-popup",
 	.alias = "popup",
 
-	.args = { "BCc:d:Eh:t:w:x:y:", 0, -1 },
+	.args = { "BCc:d:Eh:t:w:x:y:", 0, -1, NULL },
 	.usage = "[-BCE] [-c target-client] [-d start-directory] [-h height] "
 	         CMD_TARGET_PANE_USAGE " [-w width] "
 	         "[-x position] [-y position] [command]",
@@ -121,8 +121,6 @@ cmd_display_menu_get_position(struct client *tc, struct cmdq_item *item,
 			if (sr != NULL)
 				break;
 		}
-		if (line == lines)
-			ranges = &tc->status.entries[0].ranges;
 
 		if (sr != NULL) {
 			format_add(ft, "popup_window_status_line_x", "%u",
@@ -220,7 +218,7 @@ cmd_display_menu_get_position(struct client *tc, struct cmdq_item *item,
 	else if (n < 0)
 		n = 0;
 	*px = n;
-	log_debug("%s: -x: %s = %s = %u", __func__, xp, p, *px);
+	log_debug("%s: -x: %s = %s = %u (-w %u)", __func__, xp, p, *px, w);
 	free(p);
 
 	/* Expand vertical position  */
@@ -246,7 +244,7 @@ cmd_display_menu_get_position(struct client *tc, struct cmdq_item *item,
 	else if (n < 0)
 		n = 0;
 	*py = n;
-	log_debug("%s: -y: %s = %s = %u", __func__, yp, p, *py);
+	log_debug("%s: -y: %s = %s = %u (-h %u)", __func__, yp, p, *py, h);
 	free(p);
 
 	return (1);
@@ -261,10 +259,10 @@ cmd_display_menu_exec(struct cmd *self, struct cmdq_item *item)
 	struct client		*tc = cmdq_get_target_client(item);
 	struct menu		*menu = NULL;
 	struct menu_item	 menu_item;
-	const char		*key;
-	char			*title, *name;
-	int			 flags = 0, i;
-	u_int			 px, py;
+	const char		*key, *name;
+	char			*title;
+	int			 flags = 0;
+	u_int			 px, py, i, count = args_count(args);
 
 	if (tc->overlay_draw != NULL)
 		return (CMD_RETURN_NORMAL);
@@ -275,24 +273,24 @@ cmd_display_menu_exec(struct cmd *self, struct cmdq_item *item)
 		title = xstrdup("");
 	menu = menu_create(title);
 
-	for (i = 0; i != args->argc; /* nothing */) {
-		name = args->argv[i++];
+	for (i = 0; i != count; /* nothing */) {
+		name = args_string(args, i++);
 		if (*name == '\0') {
 			menu_add_item(menu, NULL, item, tc, target);
 			continue;
 		}
 
-		if (args->argc - i < 2) {
+		if (count - i < 2) {
 			cmdq_error(item, "not enough arguments");
 			free(title);
 			menu_free(menu);
 			return (CMD_RETURN_ERROR);
 		}
-		key = args->argv[i++];
+		key = args_string(args, i++);
 
 		menu_item.name = name;
 		menu_item.key = key_string_lookup_string(key);
-		menu_item.command = args->argv[i++];
+		menu_item.command = args_string(args, i++);
 
 		menu_add_item(menu, &menu_item, item, tc, target);
 	}
@@ -329,11 +327,10 @@ cmd_display_popup_exec(struct cmd *self, struct cmdq_item *item)
 	struct session		*s = target->s;
 	struct client		*tc = cmdq_get_target_client(item);
 	struct tty		*tty = &tc->tty;
-	const char		*value, *shell[] = { NULL, NULL };
-	const char		*shellcmd = NULL;
-	char			*cwd, *cause, **argv = args->argv;
-	int			 flags = 0, argc = args->argc;
-	u_int			 px, py, w, h;
+	const char		*value, *shell, *shellcmd = NULL;
+	char			*cwd, *cause, **argv = NULL;
+	int			 flags = 0, argc = 0;
+	u_int			 px, py, w, h, count = args_count(args);
 
 	if (args_has(args, 'C')) {
 		server_client_clear_overlay(tc);
@@ -362,10 +359,10 @@ cmd_display_popup_exec(struct cmd *self, struct cmdq_item *item)
 		}
 	}
 
-	if (w > tty->sx - 1)
-		w = tty->sx - 1;
-	if (h > tty->sy - 1)
-		h = tty->sy - 1;
+	if (w > tty->sx)
+		w = tty->sx;
+	if (h > tty->sy)
+		h = tty->sy;
 	if (!cmd_display_menu_get_position(tc, item, args, &px, &py, w, h))
 		return (CMD_RETURN_NORMAL);
 
@@ -374,18 +371,18 @@ cmd_display_popup_exec(struct cmd *self, struct cmdq_item *item)
 		cwd = format_single_from_target(item, value);
 	else
 		cwd = xstrdup(server_client_get_cwd(tc, s));
-	if (argc == 0)
+	if (count == 0)
 		shellcmd = options_get_string(s->options, "default-command");
-	else if (argc == 1)
-		shellcmd = argv[0];
-	if (argc <= 1 && (shellcmd == NULL || *shellcmd == '\0')) {
+	else if (count == 1)
+		shellcmd = args_string(args, 0);
+	if (count <= 1 && (shellcmd == NULL || *shellcmd == '\0')) {
 		shellcmd = NULL;
-		shell[0] = options_get_string(s->options, "default-shell");
-		if (!checkshell(shell[0]))
-			shell[0] = _PATH_BSHELL;
-		argc = 1;
-		argv = (char**)shell;
-	}
+		shell = options_get_string(s->options, "default-shell");
+		if (!checkshell(shell))
+			shell = _PATH_BSHELL;
+		cmd_append_argv(&argc, &argv, shell);
+	} else
+		args_vector(args, &argc, &argv);
 
 	if (args_has(args, 'E') > 1)
 		flags |= POPUP_CLOSEEXITZERO;
@@ -394,7 +391,10 @@ cmd_display_popup_exec(struct cmd *self, struct cmdq_item *item)
 	if (args_has(args, 'B'))
 		flags |= POPUP_NOBORDER;
 	if (popup_display(flags, item, px, py, w, h, shellcmd, argc, argv, cwd,
-	    tc, s, NULL, NULL) != 0)
+	    tc, s, NULL, NULL) != 0) {
+		cmd_free_argv(argc, argv);
 		return (CMD_RETURN_NORMAL);
+	}
+	cmd_free_argv(argc, argv);
 	return (CMD_RETURN_WAIT);
 }

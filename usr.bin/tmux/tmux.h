@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.1123 2021/08/13 23:05:40 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.1134 2021/08/21 20:46:43 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -37,7 +37,6 @@
 extern char   **environ;
 
 struct args;
-struct args_value;
 struct client;
 struct cmd;
 struct cmd_find_state;
@@ -1356,13 +1355,35 @@ struct message_entry {
 };
 TAILQ_HEAD(message_list, message_entry);
 
-/* Parsed arguments structures. */
+/* Argument type. */
+enum args_type {
+	ARGS_NONE,
+	ARGS_STRING,
+	ARGS_COMMANDS
+};
+
+/* Argument value. */
+struct args_value {
+	enum args_type		 type;
+	union {
+		char		*string;
+		struct cmd_list	*cmdlist;
+	};
+	char			*cached;
+	TAILQ_ENTRY(args_value)	 entry;
+};
+
+/* Arguments set. */
 struct args_entry;
 RB_HEAD(args_tree, args_entry);
-struct args {
-	struct args_tree	  tree;
-	int			  argc;
-	char			**argv;
+
+/* Arguments parsing state. */
+typedef enum args_type (*args_parse_cb)(struct args *, u_int);
+struct args_parse {
+	const char	*template;
+	int		 lower;
+	int		 upper;
+	args_parse_cb	 cb;
 };
 
 /* Command find structures. */
@@ -1408,7 +1429,6 @@ enum cmd_retval {
 
 /* Command parse result. */
 enum cmd_parse_status {
-	CMD_PARSE_EMPTY,
 	CMD_PARSE_ERROR,
 	CMD_PARSE_SUCCESS
 };
@@ -1453,11 +1473,7 @@ struct cmd_entry {
 	const char		*name;
 	const char		*alias;
 
-	struct {
-		const char	*template;
-		int		 lower;
-		int		 upper;
-	} args;
+	struct args_parse	 args;
 	const char		*usage;
 
 	struct cmd_entry_flag	 source;
@@ -2181,8 +2197,12 @@ void		tty_keys_free(struct tty *);
 int		tty_keys_next(struct tty *);
 
 /* arguments.c */
-void		 args_set(struct args *, u_char, const char *);
-struct args	*args_parse(const char *, int, char **);
+void		 args_set(struct args *, u_char, struct args_value *);
+struct args 	*args_create(void);
+struct args	*args_parse(const struct args_parse *, struct args_value *,
+    		     u_int);
+void		 args_vector(struct args *, int *, char ***);
+void		 args_free_value(struct args_value *);
 void		 args_free(struct args *);
 char		*args_print(struct args *);
 char		*args_escape(const char *);
@@ -2190,8 +2210,11 @@ int		 args_has(struct args *, u_char);
 const char	*args_get(struct args *, u_char);
 u_char		 args_first(struct args *, struct args_entry **);
 u_char		 args_next(struct args_entry **);
-const char	*args_first_value(struct args *, u_char, struct args_value **);
-const char	*args_next_value(struct args_value **);
+u_int		 args_count(struct args *);
+struct args_value *args_value(struct args *, u_int);
+const char	*args_string(struct args *, u_int);
+struct args_value *args_first_value(struct args *, u_char);
+struct args_value *args_next_value(struct args_value *);
 long long	 args_strtonum(struct args *, u_char, long long, long long,
 		     char **);
 long long	 args_percentage(struct args *, u_char, long long,
@@ -2230,8 +2253,8 @@ int		 cmd_find_from_nothing(struct cmd_find_state *, int);
 /* cmd.c */
 extern const struct cmd_entry *cmd_table[];
 void printflike(3, 4) cmd_log_argv(int, char **, const char *, ...);
-void		 cmd_prepend_argv(int *, char ***, char *);
-void		 cmd_append_argv(int *, char ***, char *);
+void		 cmd_prepend_argv(int *, char ***, const char *);
+void		 cmd_append_argv(int *, char ***, const char *);
 int		 cmd_pack_argv(int, char **, char *, size_t);
 int		 cmd_unpack_argv(char *, size_t, int, char ***);
 char	       **cmd_copy_argv(int, char **);
@@ -2242,11 +2265,13 @@ const struct cmd_entry *cmd_get_entry(struct cmd *);
 struct args	*cmd_get_args(struct cmd *);
 u_int		 cmd_get_group(struct cmd *);
 void		 cmd_get_source(struct cmd *, const char **, u_int *);
-struct cmd	*cmd_parse(int, char **, const char *, u_int, char **);
+struct cmd	*cmd_parse(struct args_value *, u_int, const char *, u_int,
+		     char **);
 void		 cmd_free(struct cmd *);
 char		*cmd_print(struct cmd *);
 struct cmd_list	*cmd_list_new(void);
 void		 cmd_list_append(struct cmd_list *, struct cmd *);
+void		 cmd_list_append_all(struct cmd_list *, struct cmd_list *);
 void		 cmd_list_move(struct cmd_list *, struct cmd_list *);
 void		 cmd_list_free(struct cmd_list *);
 char		*cmd_list_print(struct cmd_list *, int);
