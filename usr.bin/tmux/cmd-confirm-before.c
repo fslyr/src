@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-confirm-before.c,v 1.48 2021/08/21 10:22:38 nicm Exp $ */
+/* $OpenBSD: cmd-confirm-before.c,v 1.50 2021/08/25 08:51:55 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Tiago Cunha <me@tiagocunha.org>
@@ -28,8 +28,10 @@
  * Asks for confirmation before executing a command.
  */
 
-static enum cmd_retval	cmd_confirm_before_exec(struct cmd *,
-			    struct cmdq_item *);
+static enum args_parse_type	cmd_confirm_before_args_parse(struct args *,
+				    u_int, char **);
+static enum cmd_retval		cmd_confirm_before_exec(struct cmd *,
+				    struct cmdq_item *);
 
 static int	cmd_confirm_before_callback(struct client *, void *,
 		    const char *, int);
@@ -39,7 +41,7 @@ const struct cmd_entry cmd_confirm_before_entry = {
 	.name = "confirm-before",
 	.alias = "confirm",
 
-	.args = { "bp:t:", 1, 1, NULL },
+	.args = { "bp:t:", 1, 1, cmd_confirm_before_args_parse },
 	.usage = "[-b] [-p prompt] " CMD_TARGET_CLIENT_USAGE " command",
 
 	.flags = CMD_CLIENT_TFLAG,
@@ -47,10 +49,16 @@ const struct cmd_entry cmd_confirm_before_entry = {
 };
 
 struct cmd_confirm_before_data {
-	char			*cmd;
 	struct cmdq_item	*item;
-	struct cmd_parse_input	 pi;
+	struct cmd_list		*cmdlist;
 };
+
+static enum args_parse_type
+cmd_confirm_before_args_parse(__unused struct args *args, __unused u_int idx,
+    __unused char **cause)
+{
+	return (ARGS_PARSE_COMMANDS_OR_STRING);
+}
 
 static enum cmd_retval
 cmd_confirm_before_exec(struct cmd *self, struct cmdq_item *item)
@@ -59,30 +67,24 @@ cmd_confirm_before_exec(struct cmd *self, struct cmdq_item *item)
 	struct cmd_confirm_before_data	*cdata;
 	struct client			*tc = cmdq_get_target_client(item);
 	struct cmd_find_state		*target = cmdq_get_target(item);
-	char				*cmd, *copy, *new_prompt, *tmp;
-	const char			*prompt;
+	char				*new_prompt;
+	const char			*prompt, *cmd;
 	int				 wait = !args_has(args, 'b');
 
 	cdata = xcalloc(1, sizeof *cdata);
-	cdata->cmd = xstrdup(args_string(args, 0));
+	cdata->cmdlist = args_make_commands_now(self, item, 0);
+	if (cdata->cmdlist == NULL)
+		return (CMD_RETURN_ERROR);
+
+	if (wait)
+		cdata->item = item;
 
 	if ((prompt = args_get(args, 'p')) != NULL)
 		xasprintf(&new_prompt, "%s ", prompt);
 	else {
-		tmp = copy = xstrdup(cdata->cmd);
-		cmd = strsep(&tmp, " \t");
+		cmd = cmd_get_entry(cmd_list_first(cdata->cmdlist))->name;
 		xasprintf(&new_prompt, "Confirm '%s'? (y/n) ", cmd);
-		free(copy);
 	}
-
-	cmd_get_source(self, &cdata->pi.file, &cdata->pi.line);
-	if (wait)
-		cdata->pi.item = item;
-	cdata->pi.c = tc;
-	cmd_find_copy_state(&cdata->pi.fs, target);
-
-	if (wait)
-		cdata->item = item;
 
 	status_prompt_set(tc, target, new_prompt, NULL,
 	    cmd_confirm_before_callback, cmd_confirm_before_free, cdata,
@@ -99,10 +101,7 @@ cmd_confirm_before_callback(struct client *c, void *data, const char *s,
     __unused int done)
 {
 	struct cmd_confirm_before_data	*cdata = data;
-	const char			*cmd = cdata->cmd;
-	char				*error;
-	struct cmdq_item		*item = cdata->item;
-	enum cmd_parse_status		 status;
+	struct cmdq_item		*item = cdata->item, *new_item;
 	int				 retcode = 1;
 
 	if (c->flags & CLIENT_DEAD)
@@ -114,14 +113,13 @@ cmd_confirm_before_callback(struct client *c, void *data, const char *s,
 		goto out;
 	retcode = 0;
 
-	if (item != NULL) {
-		status = cmd_parse_and_insert(cmd, &cdata->pi, item,
-		    cmdq_get_state(item), &error);
-	} else
-		status = cmd_parse_and_append(cmd, &cdata->pi, c, NULL, &error);
-	if (status == CMD_PARSE_ERROR) {
-		cmdq_append(c, cmdq_get_error(error));
-		free(error);
+	if (item == NULL) {
+		new_item = cmdq_get_command(cdata->cmdlist, NULL);
+		cmdq_append(c, new_item);
+	} else {
+		new_item = cmdq_get_command(cdata->cmdlist,
+		    cmdq_get_state(item));
+		cmdq_insert_after(item, new_item);
 	}
 
 out:
@@ -139,6 +137,6 @@ cmd_confirm_before_free(void *data)
 {
 	struct cmd_confirm_before_data	*cdata = data;
 
-	free(cdata->cmd);
+	cmd_list_free(cdata->cmdlist);
 	free(cdata);
 }
